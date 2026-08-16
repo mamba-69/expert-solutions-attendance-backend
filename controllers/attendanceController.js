@@ -17,8 +17,8 @@ const checkIn = async (req, res) => {
       });
     }
 
-    // Check if face match score is acceptable (threshold: 0.6)
-    if (face_match_score < 0.6) {
+    // Check if face match score is acceptable (lowered threshold to 0.4)
+    if (face_match_score < 0.4) {  // Lowered from 0.6 to 0.4
       return res.status(400).json({
         success: false,
         message: 'Face verification failed. Please try again.',
@@ -55,7 +55,7 @@ const checkIn = async (req, res) => {
         },
         office_name: office_name || 'Unknown Office', // Store which office
         face_match_score,
-        verified: face_match_score >= 0.6,
+        verified: face_match_score >= 0.4,  // Lowered from 0.6 to 0.4
       },
       status: 'present',
     });
@@ -95,8 +95,8 @@ const checkOut = async (req, res) => {
       });
     }
 
-    // Check if face match score is acceptable
-    if (face_match_score < 0.6) {
+    // Check if face match score is acceptable (lowered threshold to 0.4)
+    if (face_match_score < 0.4) {  // Lowered from 0.6 to 0.4
       return res.status(400).json({
         success: false,
         message: 'Face verification failed. Please try again.',

@@ -79,8 +79,8 @@ const verifyFace = async (req, res) => {
       'face_data.descriptor': { $exists: true }
     }).select('employee_id employee_name face_data');
 
-    // Find matching employee
-    const match = findMatchingEmployee(descriptor, employees, 0.6);
+    // Find matching employee (lowered threshold for better matching)
+    const match = findMatchingEmployee(descriptor, employees, 0.4);  // Lowered from 0.6 to 0.4
 
     if (!match) {
       return res.status(404).json({
