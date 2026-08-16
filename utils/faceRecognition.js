@@ -55,6 +55,8 @@ async function extractFaceDescriptor(base64Image) {
 
     // Load image
     const img = await canvas.loadImage(buffer);
+    
+    console.log(`Image loaded: ${img.width}x${img.height}px`);
 
     // Detect face with landmarks and compute descriptor
     const detection = await faceapi
@@ -63,9 +65,12 @@ async function extractFaceDescriptor(base64Image) {
       .withFaceDescriptor();
 
     if (!detection) {
+      console.log('No face detected in image');
       return null;
     }
 
+    console.log(`Face detected with confidence: ${detection.detection.score}`);
+    
     // Return the 128-dimensional descriptor as array
     return Array.from(detection.descriptor);
   } catch (error) {
@@ -143,7 +148,7 @@ async function validateFaceImage(base64Image) {
     const imageArea = img.width * img.height;
     const faceRatio = faceArea / imageArea;
 
-    if (faceRatio < 0.05) {
+    if (faceRatio < 0.03) {  // Lowered from 0.05 to 0.03 for better flexibility
       return {
         valid: false,
         error: 'Face is too small. Please move closer to the camera.',
@@ -151,7 +156,7 @@ async function validateFaceImage(base64Image) {
       };
     }
 
-    if (faceRatio > 0.8) {
+    if (faceRatio > 0.9) {  // Increased from 0.8 to 0.9 for better flexibility
       return {
         valid: false,
         error: 'Face is too close. Please move back from the camera.',
@@ -162,7 +167,7 @@ async function validateFaceImage(base64Image) {
     // Check detection confidence
     const confidence = detection.detection.score;
 
-    if (confidence < 0.7) {
+    if (confidence < 0.5) {  // Lowered from 0.7 to 0.5 for better detection
       return {
         valid: false,
         error: 'Face detection confidence is too low. Please ensure good lighting and face the camera directly.',
