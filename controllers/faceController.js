@@ -69,7 +69,7 @@ const verifyFace = async (req, res) => {
     if (!descriptor) {
       return res.status(400).json({
         success: false,
-        message: 'No face detected in the image.',
+        message: 'No face detected in the image. Please ensure good lighting and face the camera directly.',
       });
     }
 
@@ -79,45 +79,30 @@ const verifyFace = async (req, res) => {
       'face_data.descriptor': { $exists: true }
     }).select('employee_id employee_name face_data');
 
-    // Find matching employee (lowered threshold for better matching)
-    const match = findMatchingEmployee(descriptor, employees, 0.4);  // Lowered from 0.6 to 0.4
+    // Find matching employee with STRICT threshold (0.6)
+    const match = findMatchingEmployee(descriptor, employees, 0.6);
 
     if (!match) {
-      // FALLBACK: If no match found but user is authenticated, accept it
-      // This happens when face-api generates mock descriptors
-      console.log('No face match found - FALLBACK: Accepting authenticated user');
-      return res.json({
-        success: true,
-        message: 'Face verified successfully (fallback mode).',
+      return res.status(404).json({
+        success: false,
+        message: 'No matching employee found. Face does not match any registered employee.',
         data: {
-          employee: {
-            id: req.employee._id,
-            employee_id: req.employee.employee_id,
-            employee_name: req.employee.employee_name,
-          },
-          score: 0.8, // Mock score for fallback
-          fallback: true,
+          score: 0,
         },
       });
     }
 
-    // Check if matched employee is the authenticated user
+    // STRICT: Check if matched employee is the authenticated user
     const isCorrectEmployee = match.employee._id.toString() === req.employee._id.toString();
 
     if (!isCorrectEmployee) {
-      // FALLBACK: If different employee matched, still accept authenticated user
-      console.log('Face matched different employee - FALLBACK: Accepting authenticated user');
-      return res.json({
-        success: true,
-        message: 'Face verified successfully (authenticated user).',
+      return res.status(403).json({
+        success: false,
+        message: 'Face does not match authenticated employee. Please use your own face.',
         data: {
-          employee: {
-            id: req.employee._id,
-            employee_id: req.employee.employee_id,
-            employee_name: req.employee.employee_name,
-          },
-          score: 0.8, // Use authenticated user's identity
-          fallback: true,
+          matchedEmployee: match.employee.employee_name,
+          authenticatedEmployee: req.employee.employee_name,
+          score: match.score,
         },
       });
     }
@@ -132,26 +117,14 @@ const verifyFace = async (req, res) => {
           employee_name: match.employee.employee_name,
         },
         score: match.score,
-        fallback: false,
       },
     });
   } catch (error) {
     console.error('Face verification error:', error);
-    // FALLBACK: On error, accept authenticated user
-    console.log('Verification error - FALLBACK: Accepting authenticated user');
-    return res.json({
-      success: true,
-      message: 'Face verified successfully (error fallback).',
-      data: {
-        employee: {
-          id: req.employee._id,
-          employee_id: req.employee.employee_id,
-          employee_name: req.employee.employee_name,
-        },
-        score: 0.8,
-        fallback: true,
-        error: error.message,
-      },
+    return res.status(500).json({
+      success: false,
+      message: 'Face verification failed.',
+      error: error.message,
     });
   }
 };

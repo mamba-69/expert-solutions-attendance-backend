@@ -65,11 +65,8 @@ async function extractFaceDescriptor(base64Image) {
       .withFaceDescriptor();
 
     if (!detection) {
-      console.log('No face detected in image - FALLBACK: Generating mock descriptor');
-      // TEMPORARY FALLBACK: Generate a random descriptor for testing
-      // This allows registration/check-in to work while we debug face detection
-      const mockDescriptor = Array.from({ length: 128 }, () => Math.random());
-      return mockDescriptor;
+      console.log('No face detected in image');
+      return null; // Return null instead of mock descriptor
     }
 
     console.log(`Face detected with confidence: ${detection.detection.score}`);
@@ -78,10 +75,7 @@ async function extractFaceDescriptor(base64Image) {
     return Array.from(detection.descriptor);
   } catch (error) {
     console.error('Error extracting face descriptor:', error);
-    // FALLBACK: Return mock descriptor on error
-    console.log('Error occurred - FALLBACK: Generating mock descriptor');
-    const mockDescriptor = Array.from({ length: 128 }, () => Math.random());
-    return mockDescriptor;
+    throw error; // Throw error instead of returning mock
   }
 }
 
@@ -132,14 +126,10 @@ async function validateFaceImage(base64Image) {
       .withFaceDescriptors();
 
     if (detections.length === 0) {
-      // TEMPORARY FALLBACK: Accept images even without face detection
-      console.log('No face detected - FALLBACK: Accepting image anyway');
       return {
-        valid: true,
-        confidence: 0.8,
-        faceRatio: 0.5,
-        descriptor: Array.from({ length: 128 }, () => Math.random()),
-        fallback: true,
+        valid: false,
+        error: 'No face detected',
+        faceCount: 0,
       };
     }
 
@@ -153,12 +143,12 @@ async function validateFaceImage(base64Image) {
 
     const detection = detections[0];
 
-    // Check face size (should be reasonable portion of image)
+    // Check face size
     const faceArea = detection.detection.box.width * detection.detection.box.height;
     const imageArea = img.width * img.height;
     const faceRatio = faceArea / imageArea;
 
-    if (faceRatio < 0.03) {  // Lowered from 0.05 to 0.03 for better flexibility
+    if (faceRatio < 0.05) {
       return {
         valid: false,
         error: 'Face is too small. Please move closer to the camera.',
@@ -166,7 +156,7 @@ async function validateFaceImage(base64Image) {
       };
     }
 
-    if (faceRatio > 0.9) {  // Increased from 0.8 to 0.9 for better flexibility
+    if (faceRatio > 0.9) {
       return {
         valid: false,
         error: 'Face is too close. Please move back from the camera.',
@@ -174,10 +164,10 @@ async function validateFaceImage(base64Image) {
       };
     }
 
-    // Check detection confidence
+    // Check detection confidence - STRICT
     const confidence = detection.detection.score;
 
-    if (confidence < 0.5) {  // Lowered from 0.7 to 0.5 for better detection
+    if (confidence < 0.8) {  // Increased from 0.5 to 0.8 for stricter detection
       return {
         valid: false,
         error: 'Face detection confidence is too low. Please ensure good lighting and face the camera directly.',
@@ -190,19 +180,12 @@ async function validateFaceImage(base64Image) {
       confidence,
       faceRatio,
       descriptor: Array.from(detection.descriptor),
-      fallback: false,
     };
   } catch (error) {
     console.error('Error validating face image:', error);
-    // FALLBACK: Accept on error
-    console.log('Validation error - FALLBACK: Accepting image anyway');
     return {
-      valid: true,
-      confidence: 0.8,
-      faceRatio: 0.5,
-      descriptor: Array.from({ length: 128 }, () => Math.random()),
-      fallback: true,
-      error: error.message,
+      valid: false,
+      error: 'Failed to process image: ' + error.message,
     };
   }
 }
@@ -214,7 +197,7 @@ async function validateFaceImage(base64Image) {
  * @param {number} threshold - Minimum similarity score (default: 0.6)
  * @returns {Object|null} Matched employee with score, or null
  */
-function findMatchingEmployee(descriptor, employees, threshold = 0.4) {  // Lowered from 0.6 to 0.4
+function findMatchingEmployee(descriptor, employees, threshold = 0.6) {  // Back to 0.6
   try {
     let bestMatch = null;
     let bestScore = 0;
