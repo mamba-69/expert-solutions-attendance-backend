@@ -1,13 +1,11 @@
 services:
   - type: web
     name: expert-solutions-attendance-backend
-    env: node
-    region: oregon
+    runtime: node
     plan: free
     buildCommand: npm install
-    startCommand: npm start
+    startCommand: node server.js
+    healthCheckPath: /
     envVars:
       - key: NODE_ENV
         value: production
-      - key: PORT
-        value: 3000
