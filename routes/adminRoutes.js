@@ -7,6 +7,8 @@ const {
   getAllEmployees,
   updateEmployeeCredentials,
   getAttendanceStats,
+  updateEmployee,
+  deleteEmployee,
 } = require('../controllers/adminController');
 const { authenticate, isAdmin } = require('../middleware/auth');
 
@@ -20,6 +22,8 @@ router.put('/approve-employee/:id', approveEmployee);
 router.put('/reject-employee/:id', rejectEmployee);
 router.get('/employees', getAllEmployees);
 router.put('/employee/:id/credentials', updateEmployeeCredentials);
+router.put('/employee/:id', updateEmployee);
+router.delete('/employee/:id', deleteEmployee);
 
 // Statistics routes
 router.get('/attendance-stats', getAttendanceStats);

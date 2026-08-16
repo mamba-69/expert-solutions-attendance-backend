@@ -170,13 +170,22 @@ const getAllEmployees = async (req, res) => {
     }
 
     const employees = await Employee.find(query)
-      .select('-password -face_data.descriptor')
+      .select('-password')
       .sort({ created_at: -1 });
+    
+    // Remove descriptor from face_data but keep image_url
+    const employeesWithoutDescriptor = employees.map(emp => {
+      const empObj = emp.toObject();
+      if (empObj.face_data && empObj.face_data.descriptor) {
+        delete empObj.face_data.descriptor;
+      }
+      return empObj;
+    });
 
     res.json({
       success: true,
-      count: employees.length,
-      data: employees,
+      count: employeesWithoutDescriptor.length,
+      data: employeesWithoutDescriptor,
     });
   } catch (error) {
     console.error('Get all employees error:', error);
@@ -292,6 +301,118 @@ const getAttendanceStats = async (req, res) => {
   }
 };
 
+// @desc    Update employee details
+// @route   PUT /api/admin/employee/:id
+// @access  Private/Admin
+const updateEmployee = async (req, res) => {
+  try {
+    const { id } = req.params;
+    const { employee_name, mobile_no, email, address, role, status } = req.body;
+
+    const employee = await Employee.findById(id);
+
+    if (!employee) {
+      return res.status(404).json({
+        success: false,
+        message: 'Employee not found.',
+      });
+    }
+
+    // Prevent editing superadmin
+    if (employee.role === 'superadmin') {
+      return res.status(403).json({
+        success: false,
+        message: 'Cannot edit superadmin account.',
+      });
+    }
+
+    // Update fields if provided
+    if (employee_name) employee.employee_name = employee_name;
+    if (address) employee.address = address;
+    if (email) employee.email = email;
+    if (role) employee.role = role;
+    if (status) employee.status = status;
+    
+    // Check if mobile number is changing and if it's unique
+    if (mobile_no && mobile_no !== employee.mobile_no) {
+      const existingMobile = await Employee.findOne({ 
+        mobile_no,
+        _id: { $ne: id }
+      });
+      
+      if (existingMobile) {
+        return res.status(400).json({
+          success: false,
+          message: 'Mobile number already exists.',
+        });
+      }
+      
+      employee.mobile_no = mobile_no;
+    }
+
+    await employee.save();
+
+    const updatedEmployee = await Employee.findById(id).select('-password');
+
+    res.json({
+      success: true,
+      message: 'Employee updated successfully.',
+      data: updatedEmployee,
+    });
+  } catch (error) {
+    console.error('Update employee error:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Failed to update employee.',
+      error: error.message,
+    });
+  }
+};
+
+// @desc    Delete employee
+// @route   DELETE /api/admin/employee/:id
+// @access  Private/Admin
+const deleteEmployee = async (req, res) => {
+  try {
+    const { id } = req.params;
+
+    const employee = await Employee.findById(id);
+
+    if (!employee) {
+      return res.status(404).json({
+        success: false,
+        message: 'Employee not found.',
+      });
+    }
+
+    // Prevent deleting superadmin
+    if (employee.role === 'superadmin') {
+      return res.status(403).json({
+        success: false,
+        message: 'Cannot delete superadmin account.',
+      });
+    }
+
+    // Delete associated attendance records
+    await Attendance.deleteMany({ employee_id: id });
+
+    // Delete employee
+    await Employee.findByIdAndDelete(id);
+
+    res.json({
+      success: true,
+      message: 'Employee and associated records deleted successfully.',
+    });
+  } catch (error) {
+    console.error('Delete employee error:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Failed to delete employee.',
+      error: error.message,
+    });
+  }
+};
+
 module.exports = {
   getPendingEmployees,
   approveEmployee,
@@ -299,4 +420,6 @@ module.exports = {
   getAllEmployees,
   updateEmployeeCredentials,
   getAttendanceStats,
+  updateEmployee,
+  deleteEmployee,
 };
