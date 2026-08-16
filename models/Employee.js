@@ -36,7 +36,7 @@ const employeeSchema = new mongoose.Schema({
     // Store face descriptor (128-dimensional array from face-api.js)
     descriptor: {
       type: [Number],
-      required: true,
+      required: false, // Make optional for biometric-only registration
     },
     // Store original image for reference
     image_url: {
@@ -47,6 +47,11 @@ const employeeSchema = new mongoose.Schema({
       type: Date,
       default: Date.now,
     },
+  },
+  biometric_id: {
+    // Unique identifier for device biometric authentication
+    type: String,
+    sparse: true, // Allows null for face-only employees
   },
   username: {
     type: String,

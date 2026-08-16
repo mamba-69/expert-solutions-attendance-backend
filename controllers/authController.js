@@ -15,21 +15,13 @@ const generateToken = (id, role) => {
 // @access  Public
 const registerEmployee = async (req, res) => {
   try {
-    const { employee_name, mobile_no, address, email, face_data } = req.body;
+    const { employee_name, mobile_no, address, email, face_data, biometric_id } = req.body;
 
     // Validate required fields
-    if (!employee_name || !mobile_no || !address || !face_data) {
+    if (!employee_name || !mobile_no || !address) {
       return res.status(400).json({
         success: false,
-        message: 'Please provide all required fields: name, mobile, address, and face data.',
-      });
-    }
-
-    // Validate face data structure
-    if (!face_data.descriptor || !Array.isArray(face_data.descriptor)) {
-      return res.status(400).json({
-        success: false,
-        message: 'Invalid face data format.',
+        message: 'Please provide all required fields: name, mobile, and address.',
       });
     }
 
@@ -42,38 +34,54 @@ const registerEmployee = async (req, res) => {
       });
     }
 
-    // Upload face image to ImgBB if base64 image is provided
-    let imageUrl = face_data.image_url || null;
+    // NEW: Support biometric-only registration (no face data required)
+    let faceData = null;
     
-    if (face_data.base64Image) {
-      console.log('Uploading face image to ImgBB...');
-      const uploadResult = await uploadWithRetry(
-        face_data.base64Image,
-        `${employee_name.replace(/\s+/g, '_')}_${Date.now()}`
-      );
+    if (face_data && face_data.descriptor && Array.isArray(face_data.descriptor)) {
+      // Face data provided (legacy flow)
+      let imageUrl = face_data.image_url || null;
       
-      if (uploadResult.success) {
-        imageUrl = uploadResult.url;
-        console.log('Image uploaded successfully:', imageUrl);
-      } else {
-        console.warn('Failed to upload image to ImgBB:', uploadResult.error);
-        // Continue with registration even if image upload fails
+      if (face_data.base64Image) {
+        console.log('Uploading face image to ImgBB...');
+        const uploadResult = await uploadWithRetry(
+          face_data.base64Image,
+          `${employee_name.replace(/\s+/g, '_')}_${Date.now()}`
+        );
+        
+        if (uploadResult.success) {
+          imageUrl = uploadResult.url;
+          console.log('Image uploaded successfully:', imageUrl);
+        } else {
+          console.warn('Failed to upload image to ImgBB:', uploadResult.error);
+        }
       }
+      
+      faceData = {
+        descriptor: face_data.descriptor,
+        image_url: imageUrl,
+      };
     }
 
     // Create new employee (pending status)
-    const employee = new Employee({
+    const employeeData = {
       employee_name,
       mobile_no,
       address,
       email,
-      face_data: {
-        descriptor: face_data.descriptor,
-        image_url: imageUrl,
-      },
       status: 'pending',
-    });
+    };
 
+    // Add face data only if provided
+    if (faceData) {
+      employeeData.face_data = faceData;
+    }
+
+    // Add biometric_id if provided (for device biometric authentication)
+    if (biometric_id) {
+      employeeData.biometric_id = biometric_id;
+    }
+
+    const employee = new Employee(employeeData);
     await employee.save();
 
     res.status(201).json({
@@ -84,7 +92,7 @@ const registerEmployee = async (req, res) => {
         employee_name: employee.employee_name,
         mobile_no: employee.mobile_no,
         status: employee.status,
-        image_url: imageUrl,
+        biometric_enrolled: !!biometric_id,
       },
     });
   } catch (error) {
