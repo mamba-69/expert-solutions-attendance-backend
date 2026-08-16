@@ -7,18 +7,29 @@ const LeaveRequest = require('../models/LeaveRequest');
 // @access  Private
 const checkIn = async (req, res) => {
   try {
-    const { latitude, longitude, address, face_match_score, office_name } = req.body;
+    const { latitude, longitude, address, face_match_score, office_name, biometric_verified } = req.body;
 
     // Validate required fields
-    if (!latitude || !longitude || face_match_score === undefined) {
+    if (!latitude || !longitude) {
       return res.status(400).json({
         success: false,
-        message: 'Please provide location and face match score.',
+        message: 'Please provide location.',
       });
     }
 
-    // Check if face match score is acceptable (strict threshold 0.6)
-    if (face_match_score < 0.6) {
+    // Support both face and biometric verification
+    let matchScore = face_match_score;
+    let verificationType = 'face';
+    
+    if (biometric_verified === true) {
+      matchScore = 1.0; // Biometric verification is always 100%
+      verificationType = 'biometric';
+    } else if (face_match_score === undefined) {
+      return res.status(400).json({
+        success: false,
+        message: 'Please provide face match score or biometric verification.',
+      });
+    } else if (face_match_score < 0.6) {
       return res.status(400).json({
         success: false,
         message: 'Face verification failed. Please try again.',
@@ -53,9 +64,10 @@ const checkIn = async (req, res) => {
           longitude,
           address,
         },
-        office_name: office_name || 'Unknown Office', // Store which office
-        face_match_score,
-        verified: face_match_score >= 0.6,  // Back to 0.6
+        office_name: office_name || 'Unknown Office',
+        face_match_score: matchScore,
+        verified: true,
+        verification_type: verificationType,
       },
       status: 'present',
     });
@@ -67,7 +79,7 @@ const checkIn = async (req, res) => {
 
     res.status(201).json({
       success: true,
-      message: `Checked in successfully at ${office_name || 'office'}.`,
+      message: `Checked in successfully at ${office_name || 'office'} using ${verificationType}.`,
       data: attendance,
     });
   } catch (error) {
@@ -85,18 +97,29 @@ const checkIn = async (req, res) => {
 // @access  Private
 const checkOut = async (req, res) => {
   try {
-    const { latitude, longitude, address, face_match_score, office_name } = req.body;
+    const { latitude, longitude, address, face_match_score, office_name, biometric_verified } = req.body;
 
     // Validate required fields
-    if (!latitude || !longitude || face_match_score === undefined) {
+    if (!latitude || !longitude) {
       return res.status(400).json({
         success: false,
-        message: 'Please provide location and face match score.',
+        message: 'Please provide location.',
       });
     }
 
-    // Check if face match score is acceptable (strict threshold 0.6)
-    if (face_match_score < 0.6) {
+    // Support both face and biometric verification
+    let matchScore = face_match_score;
+    let verificationType = 'face';
+    
+    if (biometric_verified === true) {
+      matchScore = 1.0; // Biometric verification is always 100%
+      verificationType = 'biometric';
+    } else if (face_match_score === undefined) {
+      return res.status(400).json({
+        success: false,
+        message: 'Please provide face match score or biometric verification.',
+      });
+    } else if (face_match_score < 0.6) {
       return res.status(400).json({
         success: false,
         message: 'Face verification failed. Please try again.',
@@ -134,9 +157,10 @@ const checkOut = async (req, res) => {
         longitude,
         address,
       },
-      office_name: office_name || 'Unknown Office', // Store which office
-      face_match_score,
-      verified: face_match_score >= 0.6,
+      office_name: office_name || 'Unknown Office',
+      face_match_score: matchScore,
+      verified: true,
+      verification_type: verificationType,
     };
 
     // Calculate total hours
@@ -149,7 +173,7 @@ const checkOut = async (req, res) => {
 
     res.json({
       success: true,
-      message: `Checked out successfully from ${office_name || 'office'}.`,
+      message: `Checked out successfully from ${office_name || 'office'} using ${verificationType}.`,
       data: attendance,
     });
   } catch (error) {
