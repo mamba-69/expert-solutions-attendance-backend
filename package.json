@@ -4,13 +4,13 @@
   "description": "Backend API for Expert Solutions Attendance System",
   "main": "server.js",
   "engines": {
-    "node": "18.x"
+    "node": "20.x"
   },
   "scripts": {
     "start": "node server.js",
     "dev": "nodemon server.js",
     "seed": "node utils/seedSuperAdmin.js",
-    "build": "echo 'No build step required'"
+    "build": "npm rebuild canvas"
   },
   "keywords": [
     "attendance",
