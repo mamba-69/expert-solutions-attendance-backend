@@ -276,10 +276,12 @@ const getAttendanceStats = async (req, res) => {
     // Count only approved employees, EXCLUDING superadmin and admin
     const totalEmployees = await Employee.countDocuments({ 
       status: 'approved',
-      role: { $nin: ['superadmin', 'admin'] } // Exclude superadmin and admin roles
+      role: { $nin: ['superadmin', 'admin'] }
     });
     
     const totalAttendance = await Attendance.countDocuments(query);
+    
+    // Count today's present employees
     const presentToday = await Attendance.countDocuments({
       date: {
         $gte: new Date(new Date().setHours(0, 0, 0, 0)),
@@ -288,13 +290,22 @@ const getAttendanceStats = async (req, res) => {
       status: 'present',
     });
 
+    // Count today's EXPLICITLY absent employees (not just "not checked in")
+    const absentToday = await Attendance.countDocuments({
+      date: {
+        $gte: new Date(new Date().setHours(0, 0, 0, 0)),
+        $lte: new Date(new Date().setHours(23, 59, 59, 999)),
+      },
+      status: 'absent',
+    });
+
     res.json({
       success: true,
       data: {
         totalEmployees,
         totalAttendance,
         presentToday,
-        absentToday: totalEmployees - presentToday,
+        absentToday, // Now shows ONLY explicitly marked absent employees
       },
     });
   } catch (error) {
