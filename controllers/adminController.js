@@ -273,7 +273,12 @@ const getAttendanceStats = async (req, res) => {
       };
     }
 
-    const totalEmployees = await Employee.countDocuments({ status: 'approved' });
+    // Count only approved employees, EXCLUDING superadmin and admin
+    const totalEmployees = await Employee.countDocuments({ 
+      status: 'approved',
+      role: { $nin: ['superadmin', 'admin'] } // Exclude superadmin and admin roles
+    });
+    
     const totalAttendance = await Attendance.countDocuments(query);
     const presentToday = await Attendance.countDocuments({
       date: {
