@@ -32,6 +32,9 @@ const employeeSchema = new mongoose.Schema({
     trim: true,
     lowercase: true,
   },
+  profile_picture: {
+    type: String, // URL from ImgBB
+  },
   face_data: {
     // Store face descriptor (128-dimensional array from face-api.js)
     descriptor: {

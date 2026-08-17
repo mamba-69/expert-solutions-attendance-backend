@@ -9,7 +9,12 @@ const {
   getAttendanceStats,
   updateEmployee,
   deleteEmployee,
+  updateProfilePicture,
 } = require('../controllers/adminController');
+const {
+  generateEmployeeReport,
+  generateAllEmployeesReport,
+} = require('../controllers/reportController');
 const { authenticate, isAdmin } = require('../middleware/auth');
 
 // All routes require authentication and admin privileges
@@ -24,8 +29,13 @@ router.get('/employees', getAllEmployees);
 router.put('/employee/:id/credentials', updateEmployeeCredentials);
 router.put('/employee/:id', updateEmployee);
 router.delete('/employee/:id', deleteEmployee);
+router.put('/employee/:id/profile-picture', updateProfilePicture);
 
 // Statistics routes
 router.get('/attendance-stats', getAttendanceStats);
+
+// Report routes
+router.get('/reports/employee/:id/pdf', generateEmployeeReport);
+router.get('/reports/all-employees/pdf', generateAllEmployeesReport);
 
 module.exports = router;

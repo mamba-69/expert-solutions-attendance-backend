@@ -1,6 +1,7 @@
 const bcrypt = require('bcryptjs');
 const Employee = require('../models/Employee');
 const Attendance = require('../models/Attendance');
+const { uploadWithRetry } = require('../utils/imageUpload');
 
 // @desc    Get all pending employee registrations
 // @route   GET /api/admin/pending-employees
@@ -413,6 +414,80 @@ const deleteEmployee = async (req, res) => {
   }
 };
 
+// @desc    Update employee profile picture
+// @route   PUT /api/admin/employee/:id/profile-picture
+// @access  Private/Admin or Self
+const updateProfilePicture = async (req, res) => {
+  try {
+    const { id } = req.params;
+    const { base64Image } = req.body;
+
+    if (!base64Image) {
+      return res.status(400).json({
+        success: false,
+        message: 'Please provide an image.',
+      });
+    }
+
+    const employee = await Employee.findById(id);
+
+    if (!employee) {
+      return res.status(404).json({
+        success: false,
+        message: 'Employee not found.',
+      });
+    }
+
+    // Check if user is updating their own profile or is admin
+    const isOwnProfile = req.employee._id.toString() === id;
+    const isAdmin = req.employee.role === 'admin' || req.employee.role === 'superadmin';
+
+    if (!isOwnProfile && !isAdmin) {
+      return res.status(403).json({
+        success: false,
+        message: 'Not authorized to update this profile picture.',
+      });
+    }
+
+    // Upload to ImgBB
+    console.log('Uploading profile picture to ImgBB...');
+    const uploadResult = await uploadWithRetry(
+      base64Image,
+      `${employee.employee_name.replace(/\s+/g, '_')}_profile_${Date.now()}`
+    );
+
+    if (!uploadResult.success) {
+      return res.status(500).json({
+        success: false,
+        message: 'Failed to upload image.',
+        error: uploadResult.error,
+      });
+    }
+
+    // Update employee profile picture
+    employee.profile_picture = uploadResult.url;
+    await employee.save();
+
+    const updatedEmployee = await Employee.findById(id).select('-password');
+
+    res.json({
+      success: true,
+      message: 'Profile picture updated successfully.',
+      data: {
+        employee: updatedEmployee,
+        profile_picture: uploadResult.url,
+      },
+    });
+  } catch (error) {
+    console.error('Update profile picture error:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Failed to update profile picture.',
+      error: error.message,
+    });
+  }
+};
+
 module.exports = {
   getPendingEmployees,
   approveEmployee,
@@ -422,4 +497,5 @@ module.exports = {
   getAttendanceStats,
   updateEmployee,
   deleteEmployee,
+  updateProfilePicture,
 };
