@@ -10,6 +10,7 @@ const {
   updateEmployee,
   deleteEmployee,
   updateProfilePicture,
+  markEmployeeAbsent,
 } = require('../controllers/adminController');
 const {
   generateEmployeeReport,
@@ -30,6 +31,7 @@ router.put('/employee/:id/credentials', updateEmployeeCredentials);
 router.put('/employee/:id', updateEmployee);
 router.delete('/employee/:id', deleteEmployee);
 router.put('/employee/:id/profile-picture', updateProfilePicture);
+router.post('/mark-absent/:employeeId', markEmployeeAbsent);
 
 // Statistics routes
 router.get('/attendance-stats', getAttendanceStats);

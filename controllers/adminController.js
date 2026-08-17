@@ -488,6 +488,76 @@ const updateProfilePicture = async (req, res) => {
   }
 };
 
+// @desc    Mark employee as absent for a specific date
+// @route   POST /api/admin/mark-absent/:employeeId
+// @access  Private/Admin
+const markEmployeeAbsent = async (req, res) => {
+  try {
+    const { employeeId } = req.params;
+    const { date, reason } = req.body;
+
+    // Validate employee
+    const employee = await Employee.findById(employeeId);
+    if (!employee) {
+      return res.status(404).json({
+        success: false,
+        message: 'Employee not found.',
+      });
+    }
+
+    if (employee.status !== 'approved') {
+      return res.status(400).json({
+        success: false,
+        message: 'Only approved employees can be marked absent.',
+      });
+    }
+
+    // Parse and validate date
+    const absenceDate = date ? new Date(date) : new Date();
+    const startOfDay = new Date(absenceDate.setHours(0, 0, 0, 0));
+    const endOfDay = new Date(absenceDate.setHours(23, 59, 59, 999));
+
+    // Check if attendance already exists for this date
+    const existingAttendance = await Attendance.findOne({
+      employee_id: employeeId,
+      date: {
+        $gte: startOfDay,
+        $lte: endOfDay,
+      },
+    });
+
+    if (existingAttendance) {
+      return res.status(400).json({
+        success: false,
+        message: 'Attendance record already exists for this date.',
+      });
+    }
+
+    // Create absent attendance record
+    const attendance = await Attendance.create({
+      employee_id: employeeId,
+      date: startOfDay,
+      status: 'absent',
+      reason: reason || 'Marked absent by admin',
+      marked_by_admin: true,
+      marked_by: req.employee._id,
+    });
+
+    res.json({
+      success: true,
+      message: 'Employee marked as absent successfully.',
+      data: attendance,
+    });
+  } catch (error) {
+    console.error('Mark absent error:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Failed to mark employee absent.',
+      error: error.message,
+    });
+  }
+};
+
 module.exports = {
   getPendingEmployees,
   approveEmployee,
@@ -498,4 +568,5 @@ module.exports = {
   updateEmployee,
   deleteEmployee,
   updateProfilePicture,
+  markEmployeeAbsent,
 };

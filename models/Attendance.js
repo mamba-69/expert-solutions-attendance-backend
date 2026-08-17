@@ -80,6 +80,17 @@ const attendanceSchema = new mongoose.Schema({
     enum: ['present', 'absent', 'half-day', 'late', 'on-leave', 'weekend', 'holiday'],
     default: 'present',
   },
+  reason: {
+    type: String, // NEW: Reason for absence/leave
+  },
+  marked_by_admin: {
+    type: Boolean, // NEW: Flag to indicate admin marked this record
+    default: false,
+  },
+  marked_by: {
+    type: mongoose.Schema.Types.ObjectId, // NEW: Admin who marked this record
+    ref: 'Employee',
+  },
   leave_request: {
     requested: {
       type: Boolean,
