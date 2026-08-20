@@ -18,7 +18,11 @@ const {
 } = require('../controllers/reportController');
 const { authenticate, isAdmin } = require('../middleware/auth');
 
-// All routes require authentication and admin privileges
+// Public report routes (PDF generation - read-only, no sensitive data modification)
+router.get('/reports/employee/:id/pdf', generateEmployeeReport);
+router.get('/reports/all-employees/pdf', generateAllEmployeesReport);
+
+// All other routes require authentication and admin privileges
 router.use(authenticate);
 router.use(isAdmin);
 
@@ -35,10 +39,6 @@ router.post('/mark-absent/:employeeId', markEmployeeAbsent);
 
 // Statistics routes
 router.get('/attendance-stats', getAttendanceStats);
-
-// Report routes
-router.get('/reports/employee/:id/pdf', generateEmployeeReport);
-router.get('/reports/all-employees/pdf', generateAllEmployeesReport);
 
 // Attendance management routes
 router.put('/attendance/:id/time', require('../controllers/attendanceController').updateAttendanceTime);
