@@ -32,6 +32,7 @@ router.get('/my-leaves', getMyLeaveRequests);
 // Admin routes
 router.get('/all', isAdmin, getAllAttendance);
 router.get('/employees-summary', isAdmin, getEmployeesSummary);
+router.get('/employee/:employeeId', isAdmin, require('../controllers/attendanceController').getEmployeeAttendance);
 router.get('/leave-requests', isAdmin, getAllLeaveRequests);
 router.put('/leave-request/:id', isAdmin, reviewLeaveRequest);
 

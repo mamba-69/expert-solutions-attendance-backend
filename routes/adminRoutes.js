@@ -40,4 +40,7 @@ router.get('/attendance-stats', getAttendanceStats);
 router.get('/reports/employee/:id/pdf', generateEmployeeReport);
 router.get('/reports/all-employees/pdf', generateAllEmployeesReport);
 
+// Attendance management routes
+router.put('/attendance/:id/time', require('../controllers/attendanceController').updateAttendanceTime);
+
 module.exports = router;

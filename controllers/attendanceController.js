@@ -739,6 +739,136 @@ const getEmployeesSummary = async (req, res) => {
   }
 };
 
+
+
+// @desc    Get employee attendance records (Admin only)
+// @route   GET /api/attendance/employee/:employeeId
+// @access  Private/Admin
+const getEmployeeAttendance = async (req, res) => {
+  try {
+    const { employeeId } = req.params;
+    const { startDate, endDate } = req.query;
+
+    // Build query
+    const query = { employee_id: employeeId };
+    
+    if (startDate && endDate) {
+      query.date = {
+        $gte: new Date(startDate),
+        $lte: new Date(endDate + 'T23:59:59.999Z'),
+      };
+    }
+
+    const attendanceRecords = await Attendance.find(query)
+      .sort({ date: -1 })
+      .lean();
+
+    res.json({
+      success: true,
+      count: attendanceRecords.length,
+      data: attendanceRecords,
+    });
+  } catch (error) {
+    console.error('Get employee attendance error:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Failed to get attendance records.',
+      error: error.message,
+    });
+  }
+};
+
+// @desc    Update attendance check-in/check-out time (Admin only)
+// @route   PUT /api/admin/attendance/:id/time
+// @access  Private/Admin
+const updateAttendanceTime = async (req, res) => {
+  try {
+    const { id } = req.params;
+    const { checkInTime, checkOutTime } = req.body;
+
+    const attendance = await Attendance.findById(id);
+    
+    if (!attendance) {
+      return res.status(404).json({
+        success: false,
+        message: 'Attendance record not found.',
+      });
+    }
+
+    // Update check-in time
+    if (checkInTime !== undefined) {
+      if (checkInTime === null || checkInTime === '') {
+        // Remove check-in
+        attendance.check_in = {
+          time: null,
+          latitude: null,
+          longitude: null,
+          address: null,
+          office_name: null,
+        };
+      } else {
+        const newCheckInTime = new Date(checkInTime);
+        attendance.check_in.time = newCheckInTime;
+      }
+    }
+
+    // Update check-out time
+    if (checkOutTime !== undefined) {
+      if (checkOutTime === null || checkOutTime === '') {
+        // Remove check-out
+        attendance.check_out = {
+          time: null,
+          latitude: null,
+          longitude: null,
+          address: null,
+        };
+      } else {
+        const newCheckOutTime = new Date(checkOutTime);
+        attendance.check_out.time = newCheckOutTime;
+      }
+    }
+
+    // Recalculate total hours if both times exist
+    if (attendance.check_in.time && attendance.check_out.time) {
+      const checkInDate = new Date(attendance.check_in.time);
+      const checkOutDate = new Date(attendance.check_out.time);
+      const diffMs = checkOutDate - checkInDate;
+      const diffHours = diffMs / (1000 * 60 * 60);
+      attendance.total_hours = Math.max(0, parseFloat(diffHours.toFixed(2)));
+      
+      // Update status based on hours
+      if (diffHours >= 8) {
+        attendance.status = 'present';
+      } else if (diffHours >= 4) {
+        attendance.status = 'half-day';
+      } else {
+        attendance.status = 'present'; // Still mark as present
+      }
+    } else if (attendance.check_in.time && !attendance.check_out.time) {
+      attendance.total_hours = 0;
+      attendance.status = 'present'; // Checked in but not out
+    } else if (!attendance.check_in.time && !attendance.check_out.time) {
+      attendance.total_hours = 0;
+      attendance.status = 'absent';
+    }
+
+    await attendance.save();
+
+    res.json({
+      success: true,
+      message: 'Attendance time updated successfully.',
+      data: attendance,
+    });
+  } catch (error) {
+    console.error('Update attendance time error:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Failed to update attendance time.',
+      error: error.message,
+    });
+  }
+};
+
 module.exports = {
   checkIn,
   checkOut,
@@ -752,5 +882,6 @@ module.exports = {
   getAllLeaveRequests,
   reviewLeaveRequest,
   getEmployeesSummary,
+  getEmployeeAttendance,
+  updateAttendanceTime,
 };
-
