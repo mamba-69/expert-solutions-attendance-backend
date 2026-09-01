@@ -168,12 +168,12 @@ const generateEmployeeReport = async (req, res) => {
           .text(record.date.toLocaleDateString(), dateX, currentY)
           .text(record.status, statusX, currentY)
           .text(
-            record.check_in.time ? new Date(record.check_in.time).toLocaleTimeString() : '-',
+            record.check_in.time ? new Date(record.check_in.time).toLocaleTimeString('en-IN', { timeZone: 'Asia/Kolkata', hour12: true }) : '-',
             checkInX,
             currentY
           )
           .text(
-            record.check_out.time ? new Date(record.check_out.time).toLocaleTimeString() : '-',
+            record.check_out.time ? new Date(record.check_out.time).toLocaleTimeString('en-IN', { timeZone: 'Asia/Kolkata', hour12: true }) : '-',
             checkOutX,
             currentY
           )
@@ -197,7 +197,7 @@ const generateEmployeeReport = async (req, res) => {
     doc.moveDown(3);
     doc.fontSize(8).fillColor('#666')
       .text(
-        `Generated on ${new Date().toLocaleString()} | Expert Attendance System`,
+        `Generated on ${new Date().toLocaleString('en-IN', { timeZone: 'Asia/Kolkata' })} | Expert Attendance System`,
         { align: 'center' }
       );
 
@@ -361,7 +361,7 @@ const generateAllEmployeesReport = async (req, res) => {
     doc.moveDown(2);
     doc.fontSize(8).fillColor('#666')
       .text(
-        `Generated on ${new Date().toLocaleString()} | Expert Attendance System`,
+        `Generated on ${new Date().toLocaleString('en-IN', { timeZone: 'Asia/Kolkata' })} | Expert Attendance System`,
         { align: 'center' }
       );
 
