@@ -2,18 +2,23 @@ require('dotenv').config({ path: require('path').join(__dirname, '../.env') });
 const express = require('express');
 const cors = require('cors');
 const connectDB = require('./config/database');
+const { initScheduler } = require('./utils/scheduler');
 
 // Import routes
 const authRoutes = require('./routes/authRoutes');
 const adminRoutes = require('./routes/adminRoutes');
 const attendanceRoutes = require('./routes/attendanceRoutes');
 const faceRoutes = require('./routes/faceRoutes');
+const cronRoutes = require('./routes/cronRoutes');
 
 // Initialize express app
 const app = express();
 
 // Connect to MongoDB
 connectDB();
+
+// Initialize scheduler (auto-absent at 12 PM daily)
+if (!process.env.VERCEL) initScheduler();
 
 // Middleware
 app.use(cors());
@@ -40,6 +45,7 @@ app.use('/api/auth', authRoutes);
 app.use('/api/admin', adminRoutes);
 app.use('/api/attendance', attendanceRoutes);
 app.use('/api/face', faceRoutes);
+app.use('/api/cron', cronRoutes);
 
 // 404 handler
 app.use((req, res) => {
@@ -71,6 +77,7 @@ app.listen(PORT, HOST, () => {
   console.log(`Listening on ${HOST}:${PORT}`);
   console.log(`API Base URL: http://localhost:${PORT}`);
   console.log(`Network URL: http://10.189.214.236:${PORT}`);
+  console.log(`Auto-absent job: Daily at 12:00 PM IST`);
   console.log('='.repeat(50));
 });
 

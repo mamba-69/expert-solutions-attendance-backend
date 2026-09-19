@@ -1,3 +1,5 @@
+const { businessDate, dateBucket, dayQuery, rangeQuery, monthRange, hoursBetween, dailyRows, workingDayCount, reportSummary } = require('../utils/attendanceTime');
+const { officeAt } = require('../utils/offices');
 const Attendance = require('../models/Attendance');
 const Employee = require('../models/Employee');
 const LeaveRequest = require('../models/LeaveRequest');
@@ -7,15 +9,17 @@ const LeaveRequest = require('../models/LeaveRequest');
 // @access  Private
 const checkIn = async (req, res) => {
   try {
-    const { latitude, longitude, address, face_match_score, office_name, biometric_verified } = req.body;
+    const { latitude, longitude, address, face_match_score, biometric_verified } = req.body;
 
     // Validate required fields
-    if (!latitude || !longitude) {
+    if (!officeAt(latitude, longitude)) {
       return res.status(400).json({
         success: false,
-        message: 'Please provide location.',
+        message: 'You must be within 50 metres of a registered office. Refresh your GPS location.',
       });
     }
+
+    const office_name = officeAt(latitude, longitude).name;
 
     // Support both face and biometric verification
     let matchScore = face_match_score;
@@ -29,26 +33,25 @@ const checkIn = async (req, res) => {
         success: false,
         message: 'Please provide face match score or biometric verification.',
       });
-    } else if (face_match_score < 0.6) {
+    } else if (typeof face_match_score !== 'number' || !Number.isFinite(face_match_score) || face_match_score < 0.6 || face_match_score > 1) {
       return res.status(400).json({
         success: false,
         message: 'Face verification failed. Please try again.',
       });
     }
 
-    const today = new Date();
-    today.setHours(0, 0, 0, 0);
+    const today = dateBucket();
 
     // Check if already checked in today
     const existingAttendance = await Attendance.findOne({
       employee_id: req.employee._id,
-      date: today,
+      date: dayQuery(),
     });
 
     if (existingAttendance) {
       return res.status(400).json({
         success: false,
-        message: 'Already checked in today.',
+        message: existingAttendance.check_in?.time ? 'Already checked in today.' : 'An absence or leave record exists for today. Ask your admin to correct it before checking in.',
         data: existingAttendance,
       });
     }
@@ -83,6 +86,7 @@ const checkIn = async (req, res) => {
       data: attendance,
     });
   } catch (error) {
+    if (error.code === 11000) return res.status(409).json({ success: false, message: 'Attendance was already recorded. Refresh to see your status.' });
     console.error('Check-in error:', error);
     res.status(500).json({
       success: false,
@@ -97,15 +101,17 @@ const checkIn = async (req, res) => {
 // @access  Private
 const checkOut = async (req, res) => {
   try {
-    const { latitude, longitude, address, face_match_score, office_name, biometric_verified } = req.body;
+    const { latitude, longitude, address, face_match_score, biometric_verified } = req.body;
 
     // Validate required fields
-    if (!latitude || !longitude) {
+    if (!officeAt(latitude, longitude)) {
       return res.status(400).json({
         success: false,
-        message: 'Please provide location.',
+        message: 'You must be within 50 metres of a registered office. Refresh your GPS location.',
       });
     }
+
+    const office_name = officeAt(latitude, longitude).name;
 
     // Support both face and biometric verification
     let matchScore = face_match_score;
@@ -119,30 +125,27 @@ const checkOut = async (req, res) => {
         success: false,
         message: 'Please provide face match score or biometric verification.',
       });
-    } else if (face_match_score < 0.6) {
+    } else if (typeof face_match_score !== 'number' || !Number.isFinite(face_match_score) || face_match_score < 0.6 || face_match_score > 1) {
       return res.status(400).json({
         success: false,
         message: 'Face verification failed. Please try again.',
       });
     }
 
-    const today = new Date();
-    today.setHours(0, 0, 0, 0);
-
     // Find today's attendance record
-    const attendance = await Attendance.findOne({
+    let attendance = await Attendance.findOne({
       employee_id: req.employee._id,
-      date: today,
+      date: dayQuery(),
     });
 
-    if (!attendance) {
+    if (!attendance || !attendance.check_in?.time) {
       return res.status(404).json({
         success: false,
         message: 'No check-in found for today. Please check in first.',
       });
     }
 
-    if (attendance.check_out.time) {
+    if (attendance.check_out?.time) {
       return res.status(400).json({
         success: false,
         message: 'Already checked out today.',
@@ -166,7 +169,11 @@ const checkOut = async (req, res) => {
     // Calculate total hours
     attendance.calculateTotalHours();
 
-    await attendance.save();
+    attendance = await Attendance.findOneAndUpdate(
+      { _id: attendance._id, 'check_out.time': null, 'check_in.time': { $ne: null } },
+      { $set: { check_out: attendance.check_out, total_hours: attendance.total_hours } },
+      { new: true, runValidators: true });
+    if (!attendance) return res.status(409).json({ success: false, message: 'Already checked out, or attendance changed. Refresh your status.' });
 
     // Populate employee details
     await attendance.populate('employee_id', 'employee_name employee_id');
@@ -196,10 +203,7 @@ const getMyAttendance = async (req, res) => {
     const query = { employee_id: req.employee._id };
 
     if (startDate && endDate) {
-      query.date = {
-        $gte: new Date(startDate),
-        $lte: new Date(endDate),
-      };
+      query.date = rangeQuery(startDate, endDate);
     }
 
     const skip = (page - 1) * limit;
@@ -235,12 +239,11 @@ const getMyAttendance = async (req, res) => {
 // @access  Private
 const getTodayAttendance = async (req, res) => {
   try {
-    const today = new Date();
-    today.setHours(0, 0, 0, 0);
+    const today = dateBucket();
 
     const attendance = await Attendance.findOne({
       employee_id: req.employee._id,
-      date: today,
+      date: dayQuery(),
     }).populate('employee_id', 'employee_name employee_id');
 
     res.json({
@@ -278,10 +281,7 @@ const getAllAttendance = async (req, res) => {
     }
 
     if (startDate && endDate) {
-      query.date = {
-        $gte: new Date(startDate),
-        $lte: new Date(endDate),
-      };
+      query.date = rangeQuery(startDate, endDate);
     }
 
     if (status) {
@@ -323,20 +323,19 @@ const getAttendanceCalendar = async (req, res) => {
   try {
     const { month, year } = req.query;
     
-    const currentDate = new Date();
-    const targetMonth = month ? parseInt(month) - 1 : currentDate.getMonth();
-    const targetYear = year ? parseInt(year) : currentDate.getFullYear();
+    const currentDate = new Date(Date.now() + 330 * 60000);
+    const targetMonth = month ? parseInt(month) - 1 : currentDate.getUTCMonth();
+    const targetYear = year ? parseInt(year) : currentDate.getUTCFullYear();
 
     // Get first and last day of month
-    const firstDay = new Date(targetYear, targetMonth, 1);
-    const lastDay = new Date(targetYear, targetMonth + 1, 0);
-    lastDay.setHours(23, 59, 59, 999);
+    const period = monthRange(targetMonth + 1, targetYear);
+    const { $gte: firstDay, $lt: lastDay } = rangeQuery(period.start, period.end);
 
     const attendance = await Attendance.find({
       employee_id: req.employee._id,
       date: {
         $gte: firstDay,
-        $lte: lastDay,
+        $lt: lastDay,
       },
     }).sort({ date: 1 });
 
@@ -345,7 +344,7 @@ const getAttendanceCalendar = async (req, res) => {
       employee_id: req.employee._id,
       leave_date: {
         $gte: firstDay,
-        $lte: lastDay,
+        $lt: lastDay,
       },
       status: 'approved',
     });
@@ -386,49 +385,33 @@ const getMonthlyReport = async (req, res) => {
       });
     }
 
-    let start, end;
-    
-    if (startDate && endDate) {
-      start = new Date(startDate);
-      end = new Date(endDate);
-    } else {
-      // Default to current month
-      const now = new Date();
-      start = new Date(now.getFullYear(), now.getMonth(), 1);
-      end = new Date(now.getFullYear(), now.getMonth() + 1, 0);
-    }
-    
-    end.setHours(23, 59, 59, 999);
-
-    const attendance = await Attendance.find({
-      employee_id: empId,
-      date: {
-        $gte: start,
-        $lte: end,
-      },
-    }).sort({ date: 1 }).populate('employee_id', 'employee_name employee_id mobile_no email');
+    const period = startDate && endDate ? { start: startDate, end: endDate } : monthRange();
+    const dateRange = rangeQuery(period.start, period.end);
+    const employee = await Employee.findById(empId).select('employee_name employee_id mobile_no email profile_picture');
+    const attendance = await Attendance.find({ employee_id: empId, date: dateRange })
+      .sort({ date: 1 }).populate('employee_id', 'employee_name employee_id mobile_no email');
 
     // Calculate statistics
-    const presentDays = attendance.filter(a => a.status === 'present').length;
+    const { totalHours, presentDays, averageHours } = reportSummary(attendance);
     const absentDays = attendance.filter(a => a.status === 'absent').length;
     const leaveDays = attendance.filter(a => a.status === 'on-leave').length;
     const halfDays = attendance.filter(a => a.status === 'half-day').length;
     const lateDays = attendance.filter(a => a.status === 'late').length;
     
-    const totalHours = attendance.reduce((sum, a) => sum + (a.total_hours || 0), 0);
-    const avgHours = attendance.length > 0 ? (totalHours / attendance.length).toFixed(2) : 0;
+    const workingDays = workingDayCount(attendance);
+    const avgHours = averageHours.toFixed(2);
 
     const absentDates = attendance
       .filter(a => a.status === 'absent')
-      .map(a => a.date.toISOString().split('T')[0]);
+      .map(a => businessDate(a.date));
 
     res.json({
       success: true,
       data: {
-        employee: attendance[0]?.employee_id || null,
+        employee,
         period: {
-          start: start.toISOString().split('T')[0],
-          end: end.toISOString().split('T')[0],
+          start: dateBucket(period.start).toISOString().slice(0,10),
+          end: dateBucket(period.end).toISOString().slice(0,10),
         },
         summary: {
           total_days: attendance.length,
@@ -439,9 +422,11 @@ const getMonthlyReport = async (req, res) => {
           late_days: lateDays,
           total_hours: totalHours.toFixed(2),
           average_hours: avgHours,
+          working_days: workingDays,
           absent_dates: absentDates,
         },
         attendance,
+        daily: dailyRows(attendance, period.start, period.end),
       },
     });
   } catch (error) {
@@ -468,13 +453,12 @@ const requestLeave = async (req, res) => {
       });
     }
 
-    const leaveDate = new Date(leave_date);
-    leaveDate.setHours(0, 0, 0, 0);
+    const leaveDate = dateBucket(leave_date);
 
     // Check if already requested
     const existing = await LeaveRequest.findOne({
       employee_id: req.employee._id,
-      leave_date: leaveDate,
+      leave_date: dayQuery(leave_date),
     });
 
     if (existing) {
@@ -621,12 +605,11 @@ const reviewLeaveRequest = async (req, res) => {
 
     // If approved, create attendance record with status 'on-leave'
     if (status === 'approved') {
-      const leaveDate = new Date(leaveRequest.leave_date);
-      leaveDate.setHours(0, 0, 0, 0);
+      const leaveDate = dateBucket(leaveRequest.leave_date);
 
       const existingAttendance = await Attendance.findOne({
         employee_id: leaveRequest.employee_id,
-        date: leaveDate,
+        date: dayQuery(leaveDate),
       });
 
       if (!existingAttendance) {
@@ -681,34 +664,32 @@ const reviewLeaveRequest = async (req, res) => {
 // @access  Private/Admin
 const getEmployeesSummary = async (req, res) => {
   try {
-    const { month, year } = req.query;
+    const { month, year, startDate, endDate } = req.query;
     
-    const currentDate = new Date();
-    const targetMonth = month ? parseInt(month) - 1 : currentDate.getMonth();
-    const targetYear = year ? parseInt(year) : currentDate.getFullYear();
+    const currentDate = new Date(Date.now() + 330 * 60000);
+    const targetMonth = month ? parseInt(month) - 1 : currentDate.getUTCMonth();
+    const targetYear = year ? parseInt(year) : currentDate.getUTCFullYear();
 
-    const firstDay = new Date(targetYear, targetMonth, 1);
-    const lastDay = new Date(targetYear, targetMonth + 1, 0);
-    lastDay.setHours(23, 59, 59, 999);
+    const period = startDate && endDate ? { start: startDate, end: endDate } : monthRange(targetMonth + 1, targetYear);
+    const { $gte: firstDay, $lt: lastDay } = rangeQuery(period.start, period.end);
 
     // Get all approved employees
     const employees = await Employee.find({ 
       status: 'approved',
       role: 'employee',
-    }).select('employee_id employee_name mobile_no email');
+    }).select('employee_id employee_name mobile_no email address profile_picture face_data.image_url');
 
     const summaries = await Promise.all(
       employees.map(async (emp) => {
         const attendance = await Attendance.find({
           employee_id: emp._id,
-          date: { $gte: firstDay, $lte: lastDay },
+          date: { $gte: firstDay, $lt: lastDay },
         });
 
-        const presentDays = attendance.filter(a => a.status === 'present').length;
+        const { totalHours, presentDays, averageHours } = reportSummary(attendance);
         const absentDays = attendance.filter(a => a.status === 'absent').length;
         const leaveDays = attendance.filter(a => a.status === 'on-leave').length;
-        const totalHours = attendance.reduce((sum, a) => sum + (a.total_hours || 0), 0);
-
+    
         return {
           employee: emp,
           summary: {
@@ -717,6 +698,7 @@ const getEmployeesSummary = async (req, res) => {
             absent_days: absentDays,
             leave_days: leaveDays,
             total_hours: totalHours.toFixed(2),
+            average_hours: averageHours.toFixed(2),
           },
         };
       })
@@ -753,10 +735,7 @@ const getEmployeeAttendance = async (req, res) => {
     const query = { employee_id: employeeId };
     
     if (startDate && endDate) {
-      query.date = {
-        $gte: new Date(startDate),
-        $lte: new Date(endDate + 'T23:59:59.999Z'),
-      };
+      query.date = rangeQuery(startDate, endDate);
     }
 
     const attendanceRecords = await Attendance.find(query)
@@ -793,6 +772,16 @@ const updateAttendanceTime = async (req, res) => {
         success: false,
         message: 'Attendance record not found.',
       });
+    }
+
+    const parseTime = (value, previous) => value === undefined ? previous : (value === null || value === '' ? null : new Date(value));
+    const nextIn = parseTime(checkInTime, attendance.check_in?.time);
+    const nextOut = parseTime(checkOutTime, attendance.check_out?.time);
+    if ((nextIn && !Number.isFinite(+nextIn)) || (nextOut && !Number.isFinite(+nextOut)) || (nextOut && !nextIn) || (nextIn && nextOut && nextOut < nextIn)) {
+      return res.status(400).json({ success: false, message: 'Enter valid times. Check-out must follow check-in.' });
+    }
+    if (nextIn && businessDate(nextIn) !== businessDate(attendance.date)) {
+      return res.status(400).json({ success: false, message: 'Check-in must be on the attendance date in IST.' });
     }
 
     // Update check-in time
@@ -832,8 +821,7 @@ const updateAttendanceTime = async (req, res) => {
     if (attendance.check_in.time && attendance.check_out.time) {
       const checkInDate = new Date(attendance.check_in.time);
       const checkOutDate = new Date(attendance.check_out.time);
-      const diffMs = checkOutDate - checkInDate;
-      const diffHours = diffMs / (1000 * 60 * 60);
+      const diffHours = hoursBetween(checkInDate, checkOutDate);
       attendance.total_hours = Math.max(0, parseFloat(diffHours.toFixed(2)));
       
       // Update status based on hours
@@ -869,6 +857,103 @@ const updateAttendanceTime = async (req, res) => {
   }
 };
 
+// @desc    Auto-mark employees absent if not checked in by 12 PM
+// @route   POST /api/admin/attendance/auto-absent
+// @access  Private/Admin (or CRON job)
+const autoMarkAbsent = async (req, res) => {
+  try {
+    const today = dateBucket();
+
+    // Get current time for logging
+    const now = new Date();
+    const currentHour = now.getHours();
+    const currentMinute = now.getMinutes();
+
+    console.log(`[Auto-Absent] Running at ${currentHour}:${currentMinute.toString().padStart(2, '0')}`);
+
+    // Get all APPROVED employees (not pending, rejected, or inactive)
+    const employees = await Employee.find({ status: 'approved', role: 'employee' });
+    
+    if (!employees || employees.length === 0) {
+      const message = 'No approved employees found';
+      console.log(`[Auto-Absent] ${message}`);
+      return res ? res.json({ success: true, message, marked_absent: 0 }) : null;
+    }
+
+    console.log(`[Auto-Absent] Found ${employees.length} approved employees to check`);
+
+    let markedAbsentCount = 0;
+    const absentEmployees = [];
+
+    // Check each employee
+    for (const employee of employees) {
+      // Check if they have attendance record for today
+      const attendance = await Attendance.findOne({
+        employee_id: employee._id,
+        date: dayQuery(),
+      });
+
+      // Check if they have an approved leave for today
+      const approvedLeave = await LeaveRequest.findOne({
+        employee_id: employee._id,
+        status: 'approved',
+        leave_date: dayQuery(),
+      });
+
+      // If no attendance record and no approved leave, mark as absent
+      if (!attendance && !approvedLeave) {
+        const newAttendance = new Attendance({
+          employee_id: employee._id,
+          date: today,
+          status: 'absent',
+          total_hours: 0,
+          check_in: null,
+          check_out: null,
+        });
+
+        await newAttendance.save();
+        markedAbsentCount++;
+        absentEmployees.push({
+          employee_id: employee.employee_id,
+          employee_name: employee.employee_name,
+        });
+
+        console.log(`[Auto-Absent] Marked ${employee.employee_name} (${employee.employee_id}) as absent`);
+      } else if (attendance) {
+        console.log(`[Auto-Absent] ${employee.employee_name} already has attendance record (${attendance.status})`);
+      } else if (approvedLeave) {
+        console.log(`[Auto-Absent] ${employee.employee_name} is on approved leave`);
+      }
+    }
+
+    const message = `Auto-absent completed: ${markedAbsentCount} employee(s) marked absent out of ${employees.length} total`;
+    console.log(`[Auto-Absent] ${message}`);
+
+    if (res) {
+      res.json({
+        success: true,
+        message,
+        total_employees: employees.length,
+        marked_absent: markedAbsentCount,
+        employees: absentEmployees,
+        timestamp: now.toISOString(),
+      });
+    }
+
+    return { success: true, marked_absent: markedAbsentCount };
+  } catch (error) {
+    console.error('[Auto-Absent] Error:', error);
+    if (res) {
+      res.status(500).json({
+        success: false,
+        message: 'Failed to auto-mark absent.',
+        error: error.message,
+      });
+    }
+    return { success: false, error: error.message };
+  }
+};
+
 module.exports = {
   checkIn,
   checkOut,
@@ -884,4 +969,5 @@ module.exports = {
   getEmployeesSummary,
   getEmployeeAttendance,
   updateAttendanceTime,
+  autoMarkAbsent,
 };

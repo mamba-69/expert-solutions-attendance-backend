@@ -168,6 +168,11 @@ const loginEmployee = async (req, res) => {
           role: employee.role,
           mobile_no: employee.mobile_no,
           email: employee.email,
+          address: employee.address,
+          status: employee.status,
+          profile_picture: employee.profile_picture,
+          created_at: employee.created_at,
+          approved_at: employee.approved_at,
         },
       },
     });
@@ -202,8 +207,71 @@ const getMe = async (req, res) => {
   }
 };
 
+// @desc    Update employee's own profile picture
+// @route   PUT /api/auth/profile-picture
+// @access  Private (Employee only)
+const updateMyProfilePicture = async (req, res) => {
+  try {
+    const { base64Image } = req.body;
+
+    if (!base64Image) {
+      return res.status(400).json({
+        success: false,
+        message: 'Please provide base64 image data.',
+      });
+    }
+
+    // Get current employee from auth middleware
+    const employee = await Employee.findById(req.employee.id);
+
+    if (!employee) {
+      return res.status(404).json({
+        success: false,
+        message: 'Employee not found.',
+      });
+    }
+
+    // Upload image to ImgBB
+    console.log(`Uploading profile picture for ${employee.employee_name}...`);
+    const uploadResult = await uploadWithRetry(
+      base64Image,
+      `${employee.employee_name.replace(/\s+/g, '_')}_profile_${Date.now()}`
+    );
+
+    if (!uploadResult.success) {
+      return res.status(500).json({
+        success: false,
+        message: 'Failed to upload image.',
+        error: uploadResult.error,
+      });
+    }
+
+    // Update employee profile picture
+    employee.profile_picture = uploadResult.url;
+    await employee.save();
+
+    console.log(`Profile picture updated for ${employee.employee_name}`);
+
+    res.json({
+      success: true,
+      message: 'Profile picture updated successfully',
+      data: {
+        profile_picture: uploadResult.url,
+      },
+    });
+  } catch (error) {
+    console.error('Update profile picture error:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Failed to update profile picture.',
+      error: error.message,
+    });
+  }
+};
+
 module.exports = {
   registerEmployee,
   loginEmployee,
   getMe,
+  updateMyProfilePicture,
 };

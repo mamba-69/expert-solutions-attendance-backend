@@ -1,386 +1,117 @@
 const PDFDocument = require('pdfkit');
 const Employee = require('../models/Employee');
 const Attendance = require('../models/Attendance');
-
-// @desc    Generate PDF report for employee attendance
-// @route   GET /api/admin/reports/employee/:id/pdf
-// @access  Private/Admin
-const generateEmployeeReport = async (req, res) => {
-  try {
-    const { id } = req.params;
-    const { startDate, endDate, month, year } = req.query;
-
-    // Get employee
-    const employee = await Employee.findById(id).select('-password');
-    if (!employee) {
-      return res.status(404).json({
-        success: false,
-        message: 'Employee not found.',
-      });
+const { monthRange, rangeQuery, dailyRows, formatHours, businessDate, dateKey, reportSummary } = require('../utils/attendanceTime');
+const clock = value => value ? new Date(value).toLocaleTimeString('en-IN', { timeZone:'Asia/Kolkata',hour:'2-digit',minute:'2-digit',hour12:true }) : '-';
+const label = status => ({'on-leave':'On leave','half-day':'Half day','no-record':'No record','upcoming':'Upcoming'}[status] || (status ? status[0].toUpperCase()+status.slice(1) : 'No record'));
+function periodFor(query) {
+  const period = query.startDate && query.endDate ? {start:dateKey(query.startDate),end:dateKey(query.endDate)} : monthRange(query.month,query.year);
+  rangeQuery(period.start,period.end);
+  return period;
+}
+const palette = { ink:'#122F32', teal:'#087F73', muted:'#627875', rule:'#DFE9E5', pale:'#F3F7F5' };
+function header(doc,title,subtitle) {
+  doc.rect(0,0,doc.page.width,124).fill(palette.ink);
+  doc.rect(40,26,24,3).fill('#D6F28C');
+  doc.fillColor('#D6F28C').font('Helvetica-Bold').fontSize(9).text('EXPERT / EMPLOYEE ATTENDANCE',74,23);
+  let titleSize=22;doc.fontSize(titleSize);
+  while(doc.widthOfString(title)>510 && titleSize>12) doc.fontSize(--titleSize);
+  doc.fillColor('#FFFFFF').text(title,40,49,{width:515,height:30,ellipsis:true});
+  doc.font('Helvetica').fontSize(9).fillColor('#D3E4DC').text(subtitle,40,91,{width:515});
+}
+function metric(doc,x,y,title,value,color=palette.ink) {
+  doc.roundedRect(x,y,163,59,8).fill(palette.pale);
+  doc.font('Helvetica').fontSize(8).fillColor(palette.muted).text(title.toUpperCase(),x+12,y+11,{width:139});
+  doc.font('Helvetica-Bold').fontSize(19).fillColor(color).text(String(value),x+12,y+28,{width:139});
+}
+const columns=[40,127,221,296,371,447];
+const widths=[81,88,69,69,70,108];
+function tableHeader(doc,y) {
+  doc.roundedRect(36,y-8,523,26,4).fill(palette.ink);
+  doc.font('Helvetica-Bold').fontSize(8).fillColor('#FFFFFF');
+  ['DATE','STATUS','CHECK IN','CHECK OUT','WORKED','OFFICE / NOTE'].forEach((v,i)=>doc.text(v,columns[i]+4,y,{width:widths[i]-8,lineBreak:false}));
+}
+function attendanceRow(doc,r,y,index) {
+  const absent=r.status==='absent', missing=r.status==='no-record';
+  const tint=absent?'#FFF1EE':missing?'#FFF8E7':index%2===0?'#F5F8F6':'#FFFFFF';
+  const color=absent?'#AA3E31':missing?'#896113':palette.ink;
+  doc.rect(36,y-5,523,28).fill(tint);
+  if(absent||missing)doc.rect(36,y-5,3,28).fill(color);
+  const inProgress=r.check_in?.time&&!r.check_out?.time;
+  const worked=inProgress?'In progress':r.check_out?.time?formatHours(r.total_hours):'-';
+  const note=missing?'No attendance recorded':r.status==='upcoming'?'Future date':r.reason||r.check_in?.office_name||'-';
+  const day=new Date(r.date+'T00:00:00Z').toLocaleDateString('en-GB',{weekday:'short',day:'2-digit',month:'short',timeZone:'UTC'});
+  const values=[day,label(r.status),clock(r.check_in?.time),clock(r.check_out?.time),worked,note];
+  values.forEach((value,i)=>{
+    doc.font(i===1?'Helvetica-Bold':'Helvetica').fontSize(i===5?7.5:8).fillColor(i===1?color:palette.ink)
+      .text(String(value),columns[i]+4,y,{width:widths[i]-8,height:24,ellipsis:true});
+  });
+}
+function begin(res,filename) {
+  const doc=new PDFDocument({margin:40,size:'A4',bufferPages:true});
+  res.setHeader('Content-Type','application/pdf');
+  res.setHeader('Content-Disposition',`attachment; filename="${filename}"`);
+  doc.pipe(res);return doc;
+}
+function employeePages(doc,employee,records,period) {
+  const subtitle=`${employee.employee_id || 'Employee'}  |  ${period.start} to ${period.end}  |  All times IST`;
+  header(doc,employee.employee_name,subtitle);
+  const {totalHours,presentDays,averageHours}=reportSummary(records);
+  const rows=dailyRows(records,period.start,period.end);
+  const count=status=>new Set(rows.filter(r=>r.status===status).map(r=>r.date)).size;
+  metric(doc,40,143,'Total hours worked',formatHours(totalHours),palette.teal);
+  metric(doc,216,143,'Days marked present',presentDays);
+  metric(doc,392,143,'Avg / present day',formatHours(averageHours),palette.teal);
+  metric(doc,40,213,'Absent days',count('absent'),'#AA3E31');
+  metric(doc,216,213,'Days with no record',count('no-record'),'#896113');
+  metric(doc,392,213,'Leave days',count('on-leave'));
+  doc.font('Helvetica').fontSize(8.5).fillColor(palette.muted)
+    .text(`Average = ${formatHours(totalHours)} total worked / ${presentDays} present days.`,40,286,{width:515});
+  doc.fontSize(8).text('Only dates marked Present count in the average denominator. No record is not an absence.',40,302,{width:515});
+  doc.font('Helvetica-Bold').fontSize(12).fillColor(palette.ink).text('Daily attendance',40,327);
+  doc.font('Helvetica').fontSize(8).fillColor(palette.muted).text('Every date in your selected period',350,330,{width:205,align:'right'});
+  let y=362;tableHeader(doc,y);y+=28;
+  rows.forEach((r,index)=>{
+    if(y+23>766){
+      doc.addPage();header(doc,employee.employee_name,subtitle);
+      doc.font('Helvetica-Bold').fontSize(11).fillColor(palette.ink).text('Daily attendance / continued',40,145);
+      y=177;tableHeader(doc,y);y+=28;
     }
-
-    // Determine date range
-    let start, end;
-    if (startDate && endDate) {
-      start = new Date(startDate);
-      end = new Date(endDate);
-    } else if (month && year) {
-      start = new Date(parseInt(year), parseInt(month) - 1, 1);
-      end = new Date(parseInt(year), parseInt(month), 0);
-    } else {
-      // Default: current month
-      const now = new Date();
-      start = new Date(now.getFullYear(), now.getMonth(), 1);
-      end = new Date(now.getFullYear(), now.getMonth() + 1, 0);
-    }
-    end.setHours(23, 59, 59, 999);
-
-    // Get attendance records
-    const attendance = await Attendance.find({
-      employee_id: id,
-      date: { $gte: start, $lte: end },
-    }).sort({ date: 1 });
-
-    // Calculate statistics
-    const stats = {
-      present: attendance.filter(a => a.status === 'present').length,
-      absent: attendance.filter(a => a.status === 'absent').length,
-      leave: attendance.filter(a => a.status === 'on-leave').length,
-      halfDay: attendance.filter(a => a.status === 'half-day').length,
-      late: attendance.filter(a => a.status === 'late').length,
-      totalHours: attendance.reduce((sum, a) => sum + (a.total_hours || 0), 0),
-    };
-
-    // Create PDF
-    const doc = new PDFDocument({ margin: 50, size: 'A4' });
-
-    // Set response headers
-    res.setHeader('Content-Type', 'application/pdf');
-    res.setHeader(
-      'Content-Disposition',
-      `attachment; filename=attendance_report_${employee.employee_id}_${start.toISOString().split('T')[0]}_to_${end.toISOString().split('T')[0]}.pdf`
-    );
-
-    // Pipe PDF to response
-    doc.pipe(res);
-
-    // Header with company info
-    doc.fontSize(24).fillColor('#3B82F6').text('Expert Attendance', { align: 'center' });
-    doc.fontSize(12).fillColor('#666').text('Attendance Report', { align: 'center' });
-    doc.moveDown();
-
-    // Employee details box
-    doc.fillColor('#000').fontSize(16).text('Employee Information', { underline: true });
-    doc.moveDown(0.5);
-    
-    const detailsStartY = doc.y;
-    doc.fontSize(11)
-      .text(`Name: ${employee.employee_name}`, 50, detailsStartY)
-      .text(`Employee ID: ${employee.employee_id || 'N/A'}`, 50)
-      .text(`Mobile: ${employee.mobile_no}`, 50)
-      .text(`Email: ${employee.email || 'N/A'}`, 50);
-    
-    doc.text(`Role: ${employee.role || 'employee'}`, 350, detailsStartY)
-      .text(`Status: ${employee.status}`, 350)
-      .text(`Report Period:`, 350)
-      .text(`${start.toLocaleDateString()} to ${end.toLocaleDateString()}`, 350);
-    
-    doc.moveDown(2);
-
-    // Statistics section
-    doc.fontSize(16).fillColor('#000').text('Attendance Statistics', { underline: true });
-    doc.moveDown(0.5);
-
-    const statsY = doc.y;
-    doc.fontSize(11)
-      .text(`Present Days: ${stats.present}`, 50, statsY)
-      .text(`Absent Days: ${stats.absent}`, 50)
-      .text(`Leave Days: ${stats.leave}`, 50);
-    
-    doc.text(`Half Days: ${stats.halfDay}`, 250, statsY)
-      .text(`Late Days: ${stats.late}`, 250)
-      .text(`Total Hours: ${stats.totalHours.toFixed(2)}`, 250);
-    
-    doc.text(`Total Records: ${attendance.length}`, 450, statsY)
-      .text(`Avg Hours/Day: ${attendance.length > 0 ? (stats.totalHours / attendance.length).toFixed(2) : '0.00'}`, 450);
-    
-    doc.moveDown(2);
-
-    // Attendance records table
-    doc.fontSize(16).fillColor('#000').text('Attendance Records', { underline: true });
-    doc.moveDown(0.5);
-
-    if (attendance.length === 0) {
-      doc.fontSize(11).fillColor('#666').text('No attendance records found for this period.');
-    } else {
-      // Table headers
-      const tableTop = doc.y;
-      const dateX = 50;
-      const statusX = 140;
-      const checkInX = 220;
-      const checkOutX = 310;
-      const hoursX = 400;
-      const officeX = 480;
-      
-      doc.fontSize(10).fillColor('#fff');
-      
-      // Header background
-      doc.rect(45, tableTop - 5, 510, 20).fill('#3B82F6');
-      
-      // Header text
-      doc.fillColor('#fff')
-        .text('Date', dateX, tableTop)
-        .text('Status', statusX, tableTop)
-        .text('Check In', checkInX, tableTop)
-        .text('Check Out', checkOutX, tableTop)
-        .text('Hours', hoursX, tableTop)
-        .text('Office', officeX, tableTop);
-      
-      doc.moveDown();
-
-      // Table rows
-      let currentY = tableTop + 25;
-      attendance.forEach((record, index) => {
-        // Check if we need a new page
-        if (currentY > 700) {
-          doc.addPage();
-          currentY = 50;
-          
-          // Repeat header on new page
-          doc.rect(45, currentY - 5, 510, 20).fill('#3B82F6');
-          doc.fillColor('#fff')
-            .text('Date', dateX, currentY)
-            .text('Status', statusX, currentY)
-            .text('Check In', checkInX, currentY)
-            .text('Check Out', checkOutX, currentY)
-            .text('Hours', hoursX, currentY)
-            .text('Office', officeX, currentY);
-          currentY += 25;
-        }
-
-        // Alternate row colors
-        if (index % 2 === 0) {
-          doc.rect(45, currentY - 5, 510, 20).fill('#F3F4F6');
-        }
-
-        // Row data
-        doc.fillColor('#000').fontSize(9)
-          .text(record.date.toLocaleDateString(), dateX, currentY)
-          .text(record.status, statusX, currentY)
-          .text(
-            record.check_in.time ? new Date(record.check_in.time).toLocaleTimeString('en-IN', { timeZone: 'Asia/Kolkata', hour12: true }) : '-',
-            checkInX,
-            currentY
-          )
-          .text(
-            record.check_out.time ? new Date(record.check_out.time).toLocaleTimeString('en-IN', { timeZone: 'Asia/Kolkata', hour12: true }) : '-',
-            checkOutX,
-            currentY
-          )
-          .text(
-            record.total_hours ? record.total_hours.toFixed(2) : '-',
-            hoursX,
-            currentY
-          )
-          .text(
-            record.check_in.office_name || '-',
-            officeX,
-            currentY,
-            { width: 70, ellipsis: true }
-          );
-
-        currentY += 20;
-      });
-    }
-
-    // Footer
-    doc.moveDown(3);
-    doc.fontSize(8).fillColor('#666')
-      .text(
-        `Generated on ${new Date().toLocaleString('en-IN', { timeZone: 'Asia/Kolkata' })} | Expert Attendance System`,
-        { align: 'center' }
-      );
-
-    // Finalize PDF
-    doc.end();
-
-  } catch (error) {
-    console.error('Generate PDF report error:', error);
-    
-    // If headers not sent yet, send JSON error
-    if (!res.headersSent) {
-      res.status(500).json({
-        success: false,
-        message: 'Failed to generate report.',
-        error: error.message,
-      });
-    }
+    attendanceRow(doc,r,y,index);y+=28;
+  });
+}
+function finish(doc) {
+  const pages=doc.bufferedPageRange();
+  for(let i=pages.start;i<pages.start+pages.count;i++) {
+    doc.switchToPage(i);
+    const bottom=doc.page.margins.bottom;doc.page.margins.bottom=0;
+    doc.moveTo(40,784).lineTo(555,784).lineWidth(0.5).stroke(palette.rule);
+    doc.font('Helvetica').fontSize(7.5).fillColor(palette.muted)
+      .text(`Generated ${businessDate()} | Employee attendance report`,40,794,{width:400,lineBreak:false});
+    doc.text(`${i+1} / ${pages.count}`,475,794,{width:80,align:'right',lineBreak:false});
+    doc.page.margins.bottom=bottom;
   }
-};
-
-// @desc    Generate PDF report for all employees
-// @route   GET /api/admin/reports/all-employees/pdf
-// @access  Private/Admin
-const generateAllEmployeesReport = async (req, res) => {
+  doc.end();
+}
+async function generateEmployeeReport(req,res) {
   try {
-    const { month, year } = req.query;
-
-    // Determine date range
-    const currentDate = new Date();
-    const targetMonth = month ? parseInt(month) - 1 : currentDate.getMonth();
-    const targetYear = year ? parseInt(year) : currentDate.getFullYear();
-
-    const start = new Date(targetYear, targetMonth, 1);
-    const end = new Date(targetYear, targetMonth + 1, 0);
-    end.setHours(23, 59, 59, 999);
-
-    // Get all approved employees
-    const employees = await Employee.find({ 
-      status: 'approved',
-      role: 'employee',
-    }).select('employee_id employee_name mobile_no').sort({ employee_name: 1 });
-
-    // Get attendance for all employees
-    const employeeStats = await Promise.all(
-      employees.map(async (emp) => {
-        const attendance = await Attendance.find({
-          employee_id: emp._id,
-          date: { $gte: start, $lte: end },
-        });
-
-        const stats = {
-          present: attendance.filter(a => a.status === 'present').length,
-          absent: attendance.filter(a => a.status === 'absent').length,
-          leave: attendance.filter(a => a.status === 'on-leave').length,
-          totalHours: attendance.reduce((sum, a) => sum + (a.total_hours || 0), 0),
-        };
-
-        return {
-          employee: emp,
-          stats,
-        };
-      })
-    );
-
-    // Create PDF
-    const doc = new PDFDocument({ margin: 50, size: 'A4' });
-
-    // Set response headers
-    res.setHeader('Content-Type', 'application/pdf');
-    res.setHeader(
-      'Content-Disposition',
-      `attachment; filename=all_employees_report_${targetYear}_${targetMonth + 1}.pdf`
-    );
-
-    // Pipe PDF to response
-    doc.pipe(res);
-
-    // Header
-    doc.fontSize(24).fillColor('#3B82F6').text('Expert Attendance', { align: 'center' });
-    doc.fontSize(12).fillColor('#666').text('All Employees Attendance Report', { align: 'center' });
-    doc.moveDown();
-
-    // Period
-    doc.fontSize(14).fillColor('#000')
-      .text(`Report Period: ${start.toLocaleDateString('en-US', { month: 'long', year: 'numeric' })}`, { align: 'center' });
-    doc.moveDown(2);
-
-    // Summary
-    const totalEmployees = employees.length;
-    const totalPresent = employeeStats.reduce((sum, e) => sum + e.stats.present, 0);
-    const totalAbsent = employeeStats.reduce((sum, e) => sum + e.stats.absent, 0);
-    const totalLeave = employeeStats.reduce((sum, e) => sum + e.stats.leave, 0);
-    const totalHours = employeeStats.reduce((sum, e) => sum + e.stats.totalHours, 0);
-
-    doc.fontSize(12).text(`Total Employees: ${totalEmployees}`)
-      .text(`Total Present Days: ${totalPresent}`)
-      .text(`Total Absent Days: ${totalAbsent}`)
-      .text(`Total Leave Days: ${totalLeave}`)
-      .text(`Total Hours Worked: ${totalHours.toFixed(2)}`);
-    
-    doc.moveDown(2);
-
-    // Employee table
-    doc.fontSize(14).text('Employee-wise Statistics', { underline: true });
-    doc.moveDown();
-
-    // Table headers
-    let currentY = doc.y;
-    const nameX = 50;
-    const empIdX = 200;
-    const presentX = 280;
-    const absentX = 340;
-    const leaveX = 400;
-    const hoursX = 460;
-
-    doc.rect(45, currentY - 5, 515, 20).fill('#3B82F6');
-    doc.fontSize(9).fillColor('#fff')
-      .text('Name', nameX, currentY)
-      .text('ID', empIdX, currentY)
-      .text('Present', presentX, currentY)
-      .text('Absent', absentX, currentY)
-      .text('Leave', leaveX, currentY)
-      .text('Hours', hoursX, currentY);
-
-    currentY += 25;
-
-    // Table rows
-    employeeStats.forEach((empData, index) => {
-      if (currentY > 700) {
-        doc.addPage();
-        currentY = 50;
-        
-        // Repeat header
-        doc.rect(45, currentY - 5, 515, 20).fill('#3B82F6');
-        doc.fillColor('#fff')
-          .text('Name', nameX, currentY)
-          .text('ID', empIdX, currentY)
-          .text('Present', presentX, currentY)
-          .text('Absent', absentX, currentY)
-          .text('Leave', leaveX, currentY)
-          .text('Hours', hoursX, currentY);
-        currentY += 25;
-      }
-
-      if (index % 2 === 0) {
-        doc.rect(45, currentY - 5, 515, 18).fill('#F3F4F6');
-      }
-
-      doc.fillColor('#000').fontSize(8)
-        .text(empData.employee.employee_name, nameX, currentY, { width: 140, ellipsis: true })
-        .text(empData.employee.employee_id || '-', empIdX, currentY)
-        .text(empData.stats.present.toString(), presentX, currentY)
-        .text(empData.stats.absent.toString(), absentX, currentY)
-        .text(empData.stats.leave.toString(), leaveX, currentY)
-        .text(empData.stats.totalHours.toFixed(2), hoursX, currentY);
-
-      currentY += 18;
-    });
-
-    // Footer
-    doc.moveDown(2);
-    doc.fontSize(8).fillColor('#666')
-      .text(
-        `Generated on ${new Date().toLocaleString('en-IN', { timeZone: 'Asia/Kolkata' })} | Expert Attendance System`,
-        { align: 'center' }
-      );
-
-    doc.end();
-
-  } catch (error) {
-    console.error('Generate all employees PDF report error:', error);
-    
-    if (!res.headersSent) {
-      res.status(500).json({
-        success: false,
-        message: 'Failed to generate report.',
-        error: error.message,
-      });
-    }
-  }
-};
-
-module.exports = {
-  generateEmployeeReport,
-  generateAllEmployeesReport,
-};
+    let period;try{period=periodFor(req.query);}catch(e){return res.status(400).json({success:false,message:e.message});}
+    const employee=await Employee.findById(req.params.id).select('employee_name employee_id');
+    if(!employee)return res.status(404).json({success:false,message:'Employee not found.'});
+    const records=await Attendance.find({employee_id:employee._id,date:rangeQuery(period.start,period.end)}).sort({date:1});
+    const doc=begin(res,`attendance_${employee.employee_id || 'employee'}_${period.start}.pdf`);
+    employeePages(doc,employee,records,period);finish(doc);
+  }catch(error){if(!res.headersSent)res.status(500).json({success:false,message:'Unable to generate report.'});else res.end();}
+}
+async function generateAllEmployeesReport(req,res) {
+  try {
+    let period;try{period=periodFor(req.query);}catch(e){return res.status(400).json({success:false,message:e.message});}
+    const employees=await Employee.find({status:'approved',role:'employee'}).select('employee_id employee_name').sort({employee_name:1});
+    const records=await Attendance.find({employee_id:{$in:employees.map(e=>e._id)},date:rangeQuery(period.start,period.end)}).sort({date:1}).lean();
+    const doc=begin(res,`team_attendance_${period.start}_${period.end}.pdf`);
+    if(!employees.length)header(doc,'Team attendance','No approved employees in this report.');
+    employees.forEach((employee,index)=>{if(index)doc.addPage();employeePages(doc,employee,records.filter(r=>String(r.employee_id)===String(employee._id)),period);});
+    finish(doc);
+  }catch(error){if(!res.headersSent)res.status(500).json({success:false,message:'Unable to generate report.'});else res.end();}
+}
+module.exports={generateEmployeeReport,generateAllEmployeesReport,employeePages,periodFor,finish};

@@ -1,3 +1,4 @@
+const { dayQuery, dateBucket, rangeQuery } = require('../utils/attendanceTime');
 const bcrypt = require('bcryptjs');
 const Employee = require('../models/Employee');
 const Attendance = require('../models/Attendance');
@@ -215,6 +216,8 @@ const updateEmployeeCredentials = async (req, res) => {
       });
     }
 
+    if (employee.role === 'superadmin' && req.employee.role !== 'superadmin') return res.status(403).json({ success: false, message: 'Superadmin privileges required.' });
+
     // Update username if provided
     if (username && username !== employee.username) {
       const existingUsername = await Employee.findOne({ 
@@ -267,10 +270,7 @@ const getAttendanceStats = async (req, res) => {
     const query = {};
     
     if (startDate && endDate) {
-      query.date = {
-        $gte: new Date(startDate),
-        $lte: new Date(endDate),
-      };
+      query.date = rangeQuery(startDate, endDate);
     }
 
     // Count only approved employees, EXCLUDING superadmin and admin
@@ -283,19 +283,13 @@ const getAttendanceStats = async (req, res) => {
     
     // Count today's present employees
     const presentToday = await Attendance.countDocuments({
-      date: {
-        $gte: new Date(new Date().setHours(0, 0, 0, 0)),
-        $lte: new Date(new Date().setHours(23, 59, 59, 999)),
-      },
+      date: dayQuery(),
       status: 'present',
     });
 
     // Count today's EXPLICITLY absent employees (not just "not checked in")
     const absentToday = await Attendance.countDocuments({
-      date: {
-        $gte: new Date(new Date().setHours(0, 0, 0, 0)),
-        $lte: new Date(new Date().setHours(23, 59, 59, 999)),
-      },
+      date: dayQuery(),
       status: 'absent',
     });
 
@@ -342,6 +336,8 @@ const updateEmployee = async (req, res) => {
         message: 'Cannot edit superadmin account.',
       });
     }
+
+    if (role && role !== employee.role && req.employee.role !== 'superadmin') return res.status(403).json({ success: false, message: 'Only a superadmin can change roles.' });
 
     // Update fields if provided
     if (employee_name) employee.employee_name = employee_name;
@@ -529,17 +525,12 @@ const markEmployeeAbsent = async (req, res) => {
     }
 
     // Parse and validate date
-    const absenceDate = date ? new Date(date) : new Date();
-    const startOfDay = new Date(absenceDate.setHours(0, 0, 0, 0));
-    const endOfDay = new Date(absenceDate.setHours(23, 59, 59, 999));
+    const startOfDay = dateBucket(date || new Date());
 
     // Check if attendance already exists for this date
     const existingAttendance = await Attendance.findOne({
       employee_id: employeeId,
-      date: {
-        $gte: startOfDay,
-        $lte: endOfDay,
-      },
+      date: dayQuery(startOfDay),
     });
 
     if (existingAttendance) {

@@ -1,3 +1,4 @@
+const { hoursBetween } = require('../utils/attendanceTime');
 const mongoose = require('mongoose');
 
 const attendanceSchema = new mongoose.Schema({
@@ -135,20 +136,12 @@ attendanceSchema.index({ employee_id: 1, date: 1 }, { unique: true });
 
 // Method to calculate total hours
 attendanceSchema.methods.calculateTotalHours = function() {
-  if (this.check_in.time && this.check_out.time) {
-    const diff = this.check_out.time - this.check_in.time;
-    this.total_hours = diff / (1000 * 60 * 60); // Convert milliseconds to hours
-  }
+  this.total_hours = hoursBetween(this.check_in?.time, this.check_out?.time);
   return this.total_hours;
 };
-
-// Pre-save middleware to calculate total hours
 attendanceSchema.pre('save', function(next) {
-  if (this.check_in.time && this.check_out.time) {
-    this.calculateTotalHours();
-  }
-  this.updated_at = Date.now();
-  next();
+  try { this.calculateTotalHours(); this.updated_at = Date.now(); next(); }
+  catch (error) { next(error); }
 });
 
 const Attendance = mongoose.model('Attendance', attendanceSchema);
