@@ -40,6 +40,7 @@ router.get('/attendance-stats', getAttendanceStats);
 
 // Attendance management routes
 router.put('/attendance/:id/time', require('../controllers/attendanceController').updateAttendanceTime);
+router.post('/attendance/create', require('../controllers/attendanceController').createAttendanceRecord);
 router.post('/attendance/auto-absent', require('../controllers/attendanceController').autoMarkAbsent);
 
 module.exports = router;

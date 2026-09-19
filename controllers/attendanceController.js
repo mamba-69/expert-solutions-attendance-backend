@@ -971,3 +971,132 @@ module.exports = {
   updateAttendanceTime,
   autoMarkAbsent,
 };
+
+
+// @desc    Create new attendance record (Admin only)
+// @route   POST /api/admin/attendance/create
+// @access  Private/Admin
+const createAttendanceRecord = async (req, res) => {
+  try {
+    const { employeeId, date, checkInTime, checkOutTime } = req.body;
+
+    if (!employeeId || !date || !checkInTime) {
+      return res.status(400).json({
+        success: false,
+        message: 'Employee ID, date, and check-in time are required.',
+      });
+    }
+
+    // Parse the date
+    const attendanceDate = dateBucket(date);
+
+    // Check if attendance record already exists for this day
+    const existingAttendance = await Attendance.findOne({
+      employee_id: employeeId,
+      date: dayQuery(date),
+    });
+
+    if (existingAttendance) {
+      return res.status(400).json({
+        success: false,
+        message: 'Attendance record already exists for this date.',
+      });
+    }
+
+    // Verify employee exists
+    const employee = await Employee.findById(employeeId);
+    if (!employee) {
+      return res.status(404).json({
+        success: false,
+        message: 'Employee not found.',
+      });
+    }
+
+    // Parse times
+    const checkInDate = new Date(checkInTime);
+    const checkOutDate = checkOutTime ? new Date(checkOutTime) : null;
+
+    // Validate times
+    if (!Number.isFinite(+checkInDate)) {
+      return res.status(400).json({
+        success: false,
+        message: 'Invalid check-in time.',
+      });
+    }
+
+    if (checkOutDate && !Number.isFinite(+checkOutDate)) {
+      return res.status(400).json({
+        success: false,
+        message: 'Invalid check-out time.',
+      });
+    }
+
+    if (checkOutDate && checkOutDate < checkInDate) {
+      return res.status(400).json({
+        success: false,
+        message: 'Check-out time must be after check-in time.',
+      });
+    }
+
+    // Calculate total hours if both times exist
+    let totalHours = 0;
+    let status = 'present';
+
+    if (checkOutDate) {
+      totalHours = hoursBetween(checkInDate, checkOutDate);
+      
+      if (totalHours >= 8) {
+        status = 'present';
+      } else if (totalHours >= 4) {
+        status = 'half-day';
+      } else {
+        status = 'present';
+      }
+    }
+
+    // Create new attendance record
+    const attendance = new Attendance({
+      employee_id: employeeId,
+      date: attendanceDate,
+      check_in: {
+        time: checkInDate,
+        location: {
+          latitude: null,
+          longitude: null,
+          address: 'Manually added by admin',
+        },
+        office_name: 'Added by Admin',
+        verified: true,
+      },
+      check_out: checkOutDate ? {
+        time: checkOutDate,
+        location: {
+          latitude: null,
+          longitude: null,
+          address: 'Manually added by admin',
+        },
+        office_name: 'Added by Admin',
+        verified: true,
+      } : null,
+      status,
+      total_hours: totalHours,
+    });
+
+    await attendance.save();
+
+    res.status(201).json({
+      success: true,
+      message: 'Attendance record created successfully.',
+      data: attendance,
+    });
+  } catch (error) {
+    console.error('Create attendance record error:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Failed to create attendance record.',
+      error: error.message,
+    });
+  }
+};
+
+module.exports.createAttendanceRecord = createAttendanceRecord;
